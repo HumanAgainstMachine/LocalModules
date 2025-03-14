@@ -1,210 +1,226 @@
-<#
+﻿<#
 .SYNOPSIS
-    Local modules management
+    LocalModules simplifies the installation of modules under development.
 
 .DESCRIPTION
-    Cmdlets to manage a local modules for current user
+    LocalModules creates and manages a local repository named 'Developing' behind
+    the scenes, streamlining the installation process for modules in develompment.
+
+.NOTES
+    Inspired by ideas and tips from the following article:
+    "Local PowerShell Module Repository – No Server Required"
+    Author: Marc-André Moreau
+    Published: March 2021
+    Source: https://blog.devolutions.net/2021/03/local-powershell-module-repository-no-server-required
 #>
 
-$localRepoPath = Join-Path -Path $env:USERPROFILE -ChildPath 'LocalRepo'
+$moduleName = "LocalModules"
 
-# From all available paths, select only the user-specific path to installed modules
-$myModulePath = $env:PSModulePath -split ';' | Where-Object { $_ -like [Environment]::GetFolderPath('MyDocuments')+'*'}
+# Create module folder into roaming directory if not exist
+New-Item -Path $env:APPDATA -Name "$ModuleName" -ItemType Directory -ErrorAction SilentlyContinue
 
-if (-not ($myModulePath)) {
-    Write-Host "User-specific module path " -NoNewline -ForegroundColor Red
-    Write-Host $myModulePath -NoNewline -ForegroundColor DarkGray
-    Write-Host " not found in PSModulePath." -ForegroundColor Red
-    Exit 2    
+# Set configuration file #
+$configPath = Join-Path -Path $env:APPDATA -ChildPath $ModuleName 'config.json'
+if (-not (Test-Path -Path $configPath -PathType Leaf)) {
+    # Create an empty config.json file if not exist
+    [PSCustomObject]@{DevModulesPath = ''} | ConvertTo-Json |
+        Set-Content -Path $configPath -Encoding UTF8
 }
+# Import config.json
+$config = Get-Content -Path $configPath -Raw | ConvertFrom-Json
 
-$repoInstalledModNames = (Get-InstalledModule).Name
-
-function Install-LModule {
-    <#
-    .SYNOPSIS
-        Install a local module bypassing repositories
-
-    .DESCRIPTION
-        This cmdlet installs an under-development module bypassing repositories, before uninstalls previous installed local module if exists.
-    #>
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory=$True, HelpMessage="Enter Module Path")]
-        [String]$Path
-    )
-
-    if (Test-Path -Path $Path -PathType Container) {
-
-        # Get module name from folder name
-        $moduleName = Split-Path -Path $Path -Leaf        
-
-        if ($repoInstalledModNames -contains $moduleName) {# Local module installed from a repo check
-            Write-Host "$moduleName is already installed from a repository" -ForegroundColor Red
-            Write-Host "Uninstall any version installed from a repository to prevent confusion." -ForegroundColor DarkYellow
-        } 
-        else {
-            # Uninstall previous local module if exist
-            $ver0ModulePath = Join-Path $myModulePath $moduleName '0.0.0'
-            Remove-Item -Path $ver0ModulePath -Recurse -Force -ErrorAction SilentlyContinue
-
-            # Install current local module
-            New-Item -Path $ver0ModulePath -ItemType Directory -Force | Out-Null
-            Copy-Item -Path "$Path\*" -Destination $ver0ModulePath -Recurse -Force
-
-            # Path to installed manifest file
-            $ver0ManifestPath = Join-Path $ver0ModulePath "$moduleName.psd1"
-
-            # Set ver to 0.0.0 if manifest exist
-            if (Test-Path -Path $ver0ManifestPath) {
-                $outputLines = @()
-
-                # Read manifest file line by line
-                $manifestContent = Get-Content -Path $ver0ManifestPath
-
-                # Loop through each line and replace the line starting with 'ModuleVersion'
-                foreach ($line in $manifestContent) {
-
-                    if ($line -match '^ModuleVersion') {
-                        $outputLines += "ModuleVersion = '0.0.0'"
-                    } else {
-                        $outputLines += $line
-                    }
-                }
-
-                # Save the updated content back to the .psd1 file
-                $outputLines | Set-Content -Path $ver0ManifestPath
-            }
-            else {# Create a minimal ver 0.0.0 manifest if NOT exist
-                New-ModuleManifest -Path $ver0ManifestPath -RootModule ".\$moduleName.psm1" -ModuleVersion '0.0.0'
-                Write-Host "A minimal manifest has been installed because you don't have one" -ForegroundColor DarkYellow
-            } 
-
-            Write-Host "Local module $moduleName successfully installed" -ForegroundColor Green
-            Write-Host "Close and reopen the PowerShell console to restart the session and see the changes." -ForegroundColor DarkYellow
-        }
-    } 
-    else {   
-        Write-Host "Local Module not found at path $path" -ForegroundColor Red
+function Test-Configuration {
+    # Missing configuration value warning
+    if (-not (Test-Path -Path $config.DevModulesPath -PathType Container)) {
+        Write-Host "Missing configuration value for DevModulesPath`n" -ForegroundColor DarkYellow
+        Write-Host "Edit the configuration file at $configPath and set the correct path to the folder containing your modules under development." -ForegroundColor DarkYellow
+        Exit 67
     }
 }
 
+# Create DevRepository folder if not exist
+$localRepoPath = Join-Path -Path $env:APPDATA -ChildPath $ModuleName 'DevelopingRepo'
+New-Item -Path $localRepoPath -ItemType Directory -ErrorAction SilentlyContinue | Out-Null
 
-function Uninstall-LModule {
-    <#
-    .SYNOPSIS
-        Uninstall a local module 
-    .DESCRIPTION
-        This cmdlet uninstall the local module with given Name.
-    #>
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory=$True, HelpMessage="Enter Module Name")]
-        [String]$Name
-    )
-
-    # $ver0ModulePath = Join-Path -Path $myModulePath -ChildPath $Name
-    $ver0ModulePath = Join-Path $myModulePath $Name '0.0.0'
-
-    # Local module installed check
-    if (Test-Path -Path $ver0ModulePath -PathType Container) {
-        
-        # Local module also installed from a repo check
-        if ($repoInstalledModNames -contains $Name) {
-            Write-Host @"
-
-$Name is also installed from a repository, you likely forced the installation 
-from there. I recommend uninstalling the repository version to avoid confusion.
-
-"@ -ForegroundColor DarkYellow
-        }
-
-        Remove-Item -Path $ver0ModulePath -Recurse -Force
-        Write-Host "Local module $Name successfully uninstalled" -ForegroundColor Green
-        Write-Host "Close and reopen the PowerShell console to restart the session and see the changes." -ForegroundColor DarkYellow
-        
-    } else {
-        Write-Host "Local module $Name not found" -ForegroundColor Red
-    }    
+# Register the local Developing repository
+$parameters = @{
+    Name = "Developing"
+    SourceLocation = $localRepoPath
+    InstallationPolicy = "Trusted"
+    ErrorAction = "SilentlyContinue"
 }
+Register-PSRepository @parameters
 
-function Get-LInstalledModule {
+function Install-DevModule {
     <#
     .SYNOPSIS
-        Get locally installed modules
+        Installs the specified module under development.
+
     .DESCRIPTION
-        Gets the list of modules not installed from a repository
+        This cmdlet ensure a smooth installation by creating a minimal module manifest if missing,
+        removing any traces of a previously installed version, and managing the local repository
+        behind the scenes to install the latest modified version of the module under development.
     #>
-    [CmdletBinding()]
-    param ()
-    # Get all directories in user modules path
-    $localInstalledModNames =   Get-ChildItem -Path $myModulePath -Directory | 
-                                Where-Object { Test-Path (Join-Path $_.FullName '0.0.0') -PathType Container } |
-                                Select-Object -ExpandProperty Name
+    [CmdletBinding( DefaultParameterSetName='NameParameterSet',
+                    SupportsShouldProcess=$true,
+                    ConfirmImpact='Medium')]
+    param(
+        [Parameter( ParameterSetName='NameParameterSet',
+                    Mandatory=$true,
+                    Position=0,
+                    ValueFromPipelineByPropertyName=$true)]
+        [ValidateNotNullOrEmpty()]
+        [string]
+        ${Name})
 
-    if ($localInstalledModNames.Count -eq 0) {
-        Write-Host "No local modules found." -ForegroundColor DarkYellow
-    } else {
-        Write-Host "`nName`n----" -ForegroundColor Green
-        foreach ($mod in $localInstalledModNames) {
-            Write-Host $mod -NoNewline
-            if ($repoInstalledModNames -contains $mod) {Write-Host " (also installed from a repository)" -ForegroundColor DarkYellow}
-            else {Write-Host ""}
-        }
-
-    }
-}
-
-function Set-LRepo {
-    <#
-    .SYNOPSIS
-        Set up LocalRepo repository on the file system
-    
-    .DESCRIPTION
-        This cmdlet registers the repository at location %USERPROFILE%\LocalRepo
-    #>
-    [CmdletBinding(SupportsShouldProcess)]
-    param ()
-    
-    if($PSCmdlet.ShouldProcess($localRepoPath, 'Set LocalRepo')){
-        try {    
-            # Create LocalRepo folder if not exist
-            New-Item -Path $localRepoPath -ItemType Directory -ErrorAction SilentlyContinue | Out-Null        
-    
-            Register-PSRepository -Name 'LocalRepo' -SourceLocation $localRepoPath -InstallationPolicy 'Trusted' -ErrorAction Stop
-            Write-Host "LocalRepo successfully set at location $localRepoPath" -ForegroundColor Green
-        }
-        catch {
-            Write-Host "LocalRepo is already set" -ForegroundColor DarkYellow
-        }
-    }    
-}
-
-function Remove-LRepo {
-    <#
-    .SYNOPSIS
-        Remove LocalRepo repository from the file system
-    
-    .DESCRIPTION
-        This cmdlet unregisters the repository and remove LocalRepo folder with its content
-    #>
-    [CmdletBinding(SupportsShouldProcess)]
-    param ()
-
-    if($PSCmdlet.ShouldProcess($localRepoPath, 'Remove LocalRepo')){    
+    begin
+    {
         try {
-            # Check if LocalRepo exists
-            Get-PSRepository -Name "LocalRepo" -ErrorAction Stop | Out-Null
+            $outBuffer = $null
+            if ($PSBoundParameters.TryGetValue('OutBuffer', [ref]$outBuffer))
+            {
+                $PSBoundParameters['OutBuffer'] = 1
+            }
 
-            Unregister-PSRepository -Name 'LocalRepo'
+            $wrappedCmd = $ExecutionContext.InvokeCommand.GetCommand('Install-Module', [System.Management.Automation.CommandTypes]::Function)
 
-            # Remove folder and its content if exist
-            Remove-Item -Path $localRepoPath -Force -Recurse -ErrorAction SilentlyContinue | Out-Null
-            
-            Write-Host "LocalRepo removed" -ForegroundColor Green
+            # Dev-module code start #
+            Test-Configuration
+
+            $devModuleName = $Name
+
+            # Test if dev-module exist
+            $devModulePath = Join-Path -Path $config.DevModulesPath -ChildPath $devModuleName
+            $devScriptPath = Join-Path -Path $devModulePath -ChildPath "$devModuleName.psm1"
+            if (-not (Test-Path -Path $devScriptPath)) {
+                Write-Host "Under development module not found" -ForegroundColor Red
+                return
+            }
+
+            # Create minimal dev-module manifest if not exist
+            $devManifestPath = Join-Path -Path $devModulePath -ChildPath "$devModuleName.psd1"
+            if (-not (Test-Path -Path $devManifestPath)) {
+                $parameters = @{
+                    Path = $devManifestPath
+                    RootModule = ".\$devModuleName.psm1"
+                    ModuleVersion = '0.0.1'
+                    Author = "You Developer"
+                    Description = "Default Dev minimal manifest"
+                }
+                New-ModuleManifest @parameters
+                Write-Host "Under development module manifest missing ..." -ForegroundColor DarkYellow
+                Write-Host "Minimal module manifest created" -ForegroundColor DarkYellow
+            }
+
+            # Unpublish (remove) from local repository previous dev-module if exist
+            $publishedDevModule = Find-Module -Name $devModuleName -Repository Developing -ErrorAction SilentlyContinue
+            if ($publishedDevModule) {
+                Remove-Item -Path (Join-Path $localRepoPath "$devModuleName.*.nupkg") -Force
+            }
+
+            # Publish to local repository current dev-module
+            Publish-Module -Path $devModulePath -Repository Developing -WarningAction SilentlyContinue
+
+            # Uninstall previous dev-module if installed
+            Uninstall-Module -Name $devModuleName -ErrorAction SilentlyContinue
+
+            # Set Developing as repository before calling Install-Module
+            $PSBoundParameters += @{'Repository'= 'Developing'}
+
+            $scriptCmd = {& $wrappedCmd @PSBoundParameters }
+
+            $steppablePipeline = $scriptCmd.GetSteppablePipeline()
+            $steppablePipeline.Begin($PSCmdlet)
+        } catch {
+            throw
         }
-        catch {
-            Write-Host "LocalRepo not found" -ForegroundColor DarkYellow
+    }
+
+    process
+    {
+        try {
+            $steppablePipeline.Process($_)
+        } catch {
+            throw
+        }
+    }
+
+    end
+    {
+        try {
+            $steppablePipeline.End()
+            exit 1
+        } catch {
+            throw
+        }
+    }
+
+    clean
+    {
+        if ($null -ne $steppablePipeline) {
+            $steppablePipeline.Clean()
+        }
+    }
+}
+
+
+function Get-InstalledDevModule {
+    <#
+    .SYNOPSIS
+        Gets a list of modules installed from the local 'Developing' repository on the computer.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Position=0, ValueFromPipelineByPropertyName=$true)]
+        [ValidateNotNullOrEmpty()]
+        [string[]]
+        ${Name})
+
+    begin
+    {
+        try {
+            $outBuffer = $null
+            if ($PSBoundParameters.TryGetValue('OutBuffer', [ref]$outBuffer))
+            {
+                $PSBoundParameters['OutBuffer'] = 1
+            }
+
+            function command {
+                Get-InstalledModule | Where-Object {$_.Repository -eq 'Developing'}
+            }
+            $wrappedCmd = $ExecutionContext.InvokeCommand.GetCommand("command", [System.Management.Automation.CommandTypes]::Function)
+
+            $scriptCmd = {& $wrappedCmd @PSBoundParameters }
+
+            $steppablePipeline = $scriptCmd.GetSteppablePipeline()
+            $steppablePipeline.Begin($PSCmdlet)
+        } catch {
+            throw
+        }
+    }
+
+    process
+    {
+        try {
+            $steppablePipeline.Process($_)
+        } catch {
+            throw
+        }
+    }
+
+    end
+    {
+        try {
+            $steppablePipeline.End()
+        } catch {
+            throw
+        }
+    }
+
+    clean
+    {
+        if ($null -ne $steppablePipeline) {
+            $steppablePipeline.Clean()
         }
     }
 }
