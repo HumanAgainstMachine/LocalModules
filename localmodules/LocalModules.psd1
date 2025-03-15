@@ -12,7 +12,7 @@
 RootModule = '.\LocalModules.psm1'
 
 # Version number of this module.
-ModuleVersion = '2.0.0'
+ModuleVersion = '2.0.1'
 
 # Supported PSEditions
 CompatiblePSEditions = @('Core')
@@ -113,6 +113,13 @@ PrivateData = @{
 
         # ReleaseNotes of this module
         ReleaseNotes = @'
+[ver 2.0.1] - 2025-03-15
+* Fix null object method call error
+* Enhance console user messages
+* Refactor code for clarity
+* Support searching nested dev-module folders
+* Add console message for multiple dev-modules
+
 [ver 2.0.0] - 2025-03-13
 - Breaking Changes
   * This release is not backward compatible with version 1.x.
