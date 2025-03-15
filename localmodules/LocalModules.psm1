@@ -87,7 +87,7 @@ function Install-DevModule {
 
             $scriptCmd = {& $wrappedCmd @PSBoundParameters }
 
-            $steppablePipeline = $scriptCmd.GetSteppablePipeline()            
+            $steppablePipeline = $scriptCmd.GetSteppablePipeline()
 
             # START -----
             Test-Configuration
@@ -96,7 +96,7 @@ function Install-DevModule {
             $devModName = $Name
 
             # Search for dev-module(s)
-            $devModItems =  Get-ChildItem -Path $devModParentePath -Directory -Recurse | 
+            $devModItems =  Get-ChildItem -Path $devModParentePath -Directory -Recurse |
                             Where-Object { $_.Name -eq $devModName }
 
             $devModPaths = @()
@@ -107,7 +107,7 @@ function Install-DevModule {
                 if (Test-Path -Path $psmPath -PathType Leaf) {
                     $devModPaths += $folder.FullName
                 }
-            }          
+            }
 
             if ($devModPaths.Count -eq 1) {
                 $devModulePath = $devModPaths[0]
@@ -126,16 +126,16 @@ function Install-DevModule {
                     Write-Host "Under-development module manifest is missing ..." -ForegroundColor DarkYellow
                     Write-Host "Minimal module manifest has been created" -ForegroundColor DarkYellow
                 }
-    
+
                 # Unpublish (remove) from local repository previous dev-module if exist
                 $publishedDevModule = Find-Module -Name $devModName -Repository Developing -ErrorAction SilentlyContinue
                 if ($publishedDevModule) {
                     Remove-Item -Path (Join-Path $localRepoPath "$devModName.*.nupkg") -Force
                 }
-    
+
                 # Publish to local repository current dev-module
                 Publish-Module -Path $devModulePath -Repository Developing -WarningAction SilentlyContinue
-    
+
                 # Uninstall previous dev-module if installed
                 Uninstall-Module -Name $devModName -ErrorAction SilentlyContinue
             }
@@ -147,7 +147,7 @@ function Install-DevModule {
                 Write-Host "Multiple under-development modules found:" -ForegroundColor DarkYellow
                 $devModPaths
                 return
-            }             
+            }
             # END -----
 
             $steppablePipeline.Begin($PSCmdlet)
@@ -177,7 +177,7 @@ function Install-DevModule {
         }
     }
 
-    clean 
+    clean
     {
         if ($null -ne $steppablePipeline) {
             $steppablePipeline.Clean()
