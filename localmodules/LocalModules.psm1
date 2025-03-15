@@ -32,7 +32,7 @@ $config = Get-Content -Path $configPath -Raw | ConvertFrom-Json
 function Test-Configuration {
     # Missing configuration value warning
     if (-not (Test-Path -Path $config.DevModulesPath -PathType Container)) {
-        Write-Host "Missing configuration value for DevModulesPath`n" -ForegroundColor DarkYellow
+        Write-Host "Missing or not valid configuration value for DevModulesPath`n" -ForegroundColor DarkYellow
         Write-Host "Edit the configuration file at $configPath and set the correct path to the folder containing your modules under development." -ForegroundColor DarkYellow
         Exit 67
     }
@@ -73,71 +73,91 @@ function Install-DevModule {
         [string]
         ${Name})
 
-    begin
-    {
+    begin {
         try {
             $outBuffer = $null
-            if ($PSBoundParameters.TryGetValue('OutBuffer', [ref]$outBuffer))
-            {
+            if ($PSBoundParameters.TryGetValue('OutBuffer', [ref]$outBuffer)) {
                 $PSBoundParameters['OutBuffer'] = 1
             }
 
             $wrappedCmd = $ExecutionContext.InvokeCommand.GetCommand('Install-Module', [System.Management.Automation.CommandTypes]::Function)
-
-            # Dev-module code start #
-            Test-Configuration
-
-            $devModuleName = $Name
-
-            # Test if dev-module exist
-            $devModulePath = Join-Path -Path $config.DevModulesPath -ChildPath $devModuleName
-            $devScriptPath = Join-Path -Path $devModulePath -ChildPath "$devModuleName.psm1"
-            if (-not (Test-Path -Path $devScriptPath)) {
-                Write-Host "Under development module not found" -ForegroundColor Red
-                return
-            }
-
-            # Create minimal dev-module manifest if not exist
-            $devManifestPath = Join-Path -Path $devModulePath -ChildPath "$devModuleName.psd1"
-            if (-not (Test-Path -Path $devManifestPath)) {
-                $parameters = @{
-                    Path = $devManifestPath
-                    RootModule = ".\$devModuleName.psm1"
-                    ModuleVersion = '0.0.1'
-                    Author = "You Developer"
-                    Description = "Default Dev minimal manifest"
-                }
-                New-ModuleManifest @parameters
-                Write-Host "Under development module manifest missing ..." -ForegroundColor DarkYellow
-                Write-Host "Minimal module manifest created" -ForegroundColor DarkYellow
-            }
-
-            # Unpublish (remove) from local repository previous dev-module if exist
-            $publishedDevModule = Find-Module -Name $devModuleName -Repository Developing -ErrorAction SilentlyContinue
-            if ($publishedDevModule) {
-                Remove-Item -Path (Join-Path $localRepoPath "$devModuleName.*.nupkg") -Force
-            }
-
-            # Publish to local repository current dev-module
-            Publish-Module -Path $devModulePath -Repository Developing -WarningAction SilentlyContinue
-
-            # Uninstall previous dev-module if installed
-            Uninstall-Module -Name $devModuleName -ErrorAction SilentlyContinue
 
             # Set Developing as repository before calling Install-Module
             $PSBoundParameters += @{'Repository'= 'Developing'}
 
             $scriptCmd = {& $wrappedCmd @PSBoundParameters }
 
-            $steppablePipeline = $scriptCmd.GetSteppablePipeline()
+            $steppablePipeline = $scriptCmd.GetSteppablePipeline()            
+
+            # START -----
+            Test-Configuration
+
+            $devModParentePath = $config.DevModulesPath
+            $devModName = $Name
+
+            # Search for dev-module(s)
+            $devModItems =  Get-ChildItem -Path $devModParentePath -Directory -Recurse | 
+                            Where-Object { $_.Name -eq $devModName }
+
+            $devModPaths = @()
+
+            # Check each potential dev-module folder for the .psm1 file
+            foreach ($folder in $devModItems) {
+                $psmPath = Join-Path -Path $folder.FullName -ChildPath "$devModName.psm1"
+                if (Test-Path -Path $psmPath -PathType Leaf) {
+                    $devModPaths += $folder.FullName
+                }
+            }          
+
+            if ($devModPaths.Count -eq 1) {
+                $devModulePath = $devModPaths[0]
+
+                # Create minimal dev-module manifest if not exist
+                $devManifestPath = Join-Path -Path $devModulePath -ChildPath "$devModName.psd1"
+                if (-not (Test-Path -Path $devManifestPath)) {
+                    $parameters = @{
+                        Path = $devManifestPath
+                        RootModule = ".\$devModName.psm1"
+                        ModuleVersion = '0.0.1'
+                        Author = "You Developer"
+                        Description = "Default Dev minimal manifest"
+                    }
+                    New-ModuleManifest @parameters
+                    Write-Host "Under-development module manifest is missing ..." -ForegroundColor DarkYellow
+                    Write-Host "Minimal module manifest has been created" -ForegroundColor DarkYellow
+                }
+    
+                # Unpublish (remove) from local repository previous dev-module if exist
+                $publishedDevModule = Find-Module -Name $devModName -Repository Developing -ErrorAction SilentlyContinue
+                if ($publishedDevModule) {
+                    Remove-Item -Path (Join-Path $localRepoPath "$devModName.*.nupkg") -Force
+                }
+    
+                # Publish to local repository current dev-module
+                Publish-Module -Path $devModulePath -Repository Developing -WarningAction SilentlyContinue
+    
+                # Uninstall previous dev-module if installed
+                Uninstall-Module -Name $devModName -ErrorAction SilentlyContinue
+            }
+            elseif ($devModPaths.Count -eq 0) {
+                Write-Host "The under-development module $devModName was not found in $devModParentePath" -ForegroundColor DarkYellow
+                return
+            }
+            elseif ($devModPaths.Count -gt 1) {
+                Write-Host "Multiple under-development modules found:" -ForegroundColor DarkYellow
+                $devModPaths
+                return
+            }             
+            # END -----
+
             $steppablePipeline.Begin($PSCmdlet)
+
         } catch {
             throw
         }
     }
 
-    process
-    {
+    process {
         try {
             $steppablePipeline.Process($_)
         } catch {
@@ -149,13 +169,15 @@ function Install-DevModule {
     {
         try {
             $steppablePipeline.End()
-            exit 1
+            if ($devModPaths.Count -eq 1) {
+                exit 1
+            }
         } catch {
             throw
         }
     }
 
-    clean
+    clean 
     {
         if ($null -ne $steppablePipeline) {
             $steppablePipeline.Clean()
