@@ -2,20 +2,21 @@
 
 ## Overview
 
-**LocalModules** simplifies the installation of PowerShell modules under development that are not yet ready for publishing, streamlining the development-test cycle.
+**LocalModules** simplifies the installation of PowerShell modules under development on your local machine that are not yet ready for publishing, streamlining the development and testing process.
 
-The minimal file structure of a PowerShell module in development is as follows:
+The minimal file structure for a PowerShell module in development is as follows:
 
-    DevModuleName/          # Folder containing the module files
-    |_ _ DevModuleName.psm1 # Module script file.
+    DevModulesFolder/
+    |_ _ DevModuleName/          # Folder containing the module files
+         |_ _ DevModuleName.psm1 # Module script file.
 
 
 ## Features
 
 - Creates and manages a local repository behind the scene (`Developing`).
-- Ensures smooth installation of modules in development.
-- Supports creating minimal module manifests automatically.
-- List all installed development modules.
+- Generates a minimal module manifest if one is not already provided.
+- Removes all traces of the previously installed version before installing the latest edited version.
+- Lists only installed development modules.
 
 ## Prerequisites
 
